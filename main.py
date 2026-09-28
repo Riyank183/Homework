@@ -9,26 +9,26 @@ from supabase import create_client, Client
 
 app = FastAPI(title="Homework AI Backend")
 
-# Allow requests from your Next.js frontend (Vercel or local)
+# Allow requests from your Next.js frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows requests from Vercel & local environments
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Initialize API clients from environment variables
-groq_client = Groq(api_key=os.environ.get("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"))
-gemini_client = genai.Client(api_key=os.environ.get("AQ.Ab8RN6JBD0IDojHbgPzBvGm7psykI7YlqJyJsOmm60nYzgMrdA"))
+# Reads keys safely from Render's environment variables (DO NOT paste literal keys here!)
+groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+gemini_client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 
-supabase_url = os.environ.get("https://sykibyaqyxsmsfbfqwpg.supabase.co")
-supabase_key = os.environ.get("sb_secret__REBtTlKIO7YGima-8_VdQ_no4anlpk")
-supabase: Client = create_client(https://sykibyaqyxsmsfbfqwpg.supabase.co, sb_secret__REBtTlKIO7YGima-8_VdQ_no4anlpk) if supabase_url and sb_secret__REBtTlKIO7YGima-8_VdQ_no4anlpk else None
+supabase_url = os.environ.get("SUPABASE_URL")
+supabase_key = os.environ.get("SUPABASE_SERVICE_KEY")
+supabase: Client = create_client(supabase_url, supabase_key) if supabase_url and supabase_key else None
 
 class ChatRequest(BaseModel):
     prompt: str
-    model: str = "groq"  # Options: 'groq' or 'gemini'
+    model: str = "groq"
 
 @app.get("/")
 def health_check():
@@ -36,15 +36,12 @@ def health_check():
 
 @app.post("/api/chat")
 async def chat_endpoint(request: ChatRequest):
-    """
-    Streams response chunks using Groq or Gemini based on user routing.
-    """
     if request.model == "groq":
         def generate_groq():
             stream = groq_client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
                 messages=[
-                    {"role": "system", "content": "You are an expert AI tutor. Explain step-by-step and use standard LaTeX formatting for math."},
+                    {"role": "system", "content": "You are a direct, concise homework tutor. Format math in LaTeX."},
                     {"role": "user", "content": request.prompt}
                 ],
                 stream=True
@@ -69,4 +66,4 @@ async def chat_endpoint(request: ChatRequest):
         return StreamingResponse(generate_gemini(), media_type="text/plain")
 
     else:
-        raise HTTPException(status_code=400, detail="Invalid model selection. Choose 'groq' or 'gemini'.")
+        raise HTTPException(status_code=400, detail="Invalid model selection.")
