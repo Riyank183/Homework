@@ -18,7 +18,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Reads keys safely from Render's environment variables (DO NOT paste literal keys here!)
+# Reads keys safely from Render's environment variables
 groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 gemini_client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 
@@ -27,7 +27,8 @@ supabase_key = os.environ.get("SUPABASE_SERVICE_KEY")
 supabase: Client = create_client(supabase_url, supabase_key) if supabase_url and supabase_key else None
 
 class ChatRequest(BaseModel):
-    prompt: str
+    message: str = None
+    prompt: str = None
     model: str = "groq"
 
 @app.get("/")
@@ -36,32 +37,43 @@ def health_check():
 
 @app.post("/api/chat")
 async def chat_endpoint(request: ChatRequest):
+    # Accept either 'message' or 'prompt' sent from Next.js
+    user_prompt = request.message or request.prompt
+    if not user_prompt:
+        raise HTTPException(status_code=400, detail="No prompt or message provided.")
+
     if request.model == "groq":
         def generate_groq():
-            stream = groq_client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=[
-                    {"role": "system", "content": "You are a direct, concise homework tutor. Format math in LaTeX."},
-                    {"role": "user", "content": request.prompt}
-                ],
-                stream=True
-            )
-            for chunk in stream:
-                content = chunk.choices[0].delta.content
-                if content:
-                    yield content
+            try:
+                stream = groq_client.chat.completions.create(
+                    model="llama-3.1-8b-instant",
+                    messages=[
+                        {"role": "system", "content": "You are a direct, concise homework tutor. Format math in LaTeX."},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    stream=True
+                )
+                for chunk in stream:
+                    content = chunk.choices[0].delta.content
+                    if content:
+                        yield content
+            except Exception as e:
+                yield f"Groq Error: {str(e)}"
 
         return StreamingResponse(generate_groq(), media_type="text/plain")
 
     elif request.model == "gemini":
         def generate_gemini():
-            response = gemini_client.models.generate_content_stream(
-                model="gemini-2.5-flash",
-                contents=request.prompt
-            )
-            for chunk in response:
-                if chunk.text:
-                    yield chunk.text
+            try:
+                response = gemini_client.models.generate_content_stream(
+                    model="gemini-2.5-flash",
+                    contents=user_prompt
+                )
+                for chunk in response:
+                    if chunk.text:
+                        yield chunk.text
+            except Exception as e:
+                yield f"Gemini Error: {str(e)}"
 
         return StreamingResponse(generate_gemini(), media_type="text/plain")
 
