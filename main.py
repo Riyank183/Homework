@@ -44,9 +44,9 @@ async def chat_endpoint(request: ChatRequest):
     if request.model == "groq":
         def generate_groq():
             try:
-                # Primary attempt using llama-3.3-70b-versatile
+                # Primary model call using Qwen 3.6 27B
                 stream = groq_client.chat.completions.create(
-                    model="llama-3.3-70b-versatile",
+                    model="qwen/qwen3.6-27b",
                     messages=[
                         {"role": "system", "content": "You are a direct, concise homework tutor. Format math in LaTeX."},
                         {"role": "user", "content": user_prompt}
@@ -58,10 +58,10 @@ async def chat_endpoint(request: ChatRequest):
                     if content:
                         yield content
             except Exception as e:
-                # Automatic fallback if primary model fails
                 try:
+                    # Fallback model call using GPT-OSS 20B
                     fallback_stream = groq_client.chat.completions.create(
-                        model="llama3-8b-8192",
+                        model="openai/gpt-oss-20b",
                         messages=[
                             {"role": "system", "content": "You are a direct, concise homework tutor. Format math in LaTeX."},
                             {"role": "user", "content": user_prompt}
