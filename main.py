@@ -37,7 +37,6 @@ def health_check():
 
 @app.post("/api/chat")
 async def chat_endpoint(request: ChatRequest):
-    # Accept either 'message' or 'prompt' sent from Next.js
     user_prompt = request.message or request.prompt
     if not user_prompt:
         raise HTTPException(status_code=400, detail="No prompt or message provided.")
@@ -45,8 +44,9 @@ async def chat_endpoint(request: ChatRequest):
     if request.model == "groq":
         def generate_groq():
             try:
+                # Primary attempt using llama-3.3-70b-versatile
                 stream = groq_client.chat.completions.create(
-                    model="llama-3.1-8b-instant",
+                    model="llama-3.3-70b-versatile",
                     messages=[
                         {"role": "system", "content": "You are a direct, concise homework tutor. Format math in LaTeX."},
                         {"role": "user", "content": user_prompt}
@@ -58,7 +58,22 @@ async def chat_endpoint(request: ChatRequest):
                     if content:
                         yield content
             except Exception as e:
-                yield f"Groq Error: {str(e)}"
+                # Automatic fallback if primary model fails
+                try:
+                    fallback_stream = groq_client.chat.completions.create(
+                        model="llama3-8b-8192",
+                        messages=[
+                            {"role": "system", "content": "You are a direct, concise homework tutor. Format math in LaTeX."},
+                            {"role": "user", "content": user_prompt}
+                        ],
+                        stream=True
+                    )
+                    for chunk in fallback_stream:
+                        content = chunk.choices[0].delta.content
+                        if content:
+                            yield content
+                except Exception as fallback_err:
+                    yield f"Groq Error: {str(fallback_err)}"
 
         return StreamingResponse(generate_groq(), media_type="text/plain")
 
