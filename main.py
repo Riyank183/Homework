@@ -81,9 +81,39 @@ async def chat_endpoint(request: ChatRequest):
                         yield chunk.text
                         await asyncio.sleep(0.01)
             except Exception as e:
-                yield f"\n[Error: {str(e)}]"
+                try:
+                    # Fallback model call using GPT-OSS 20B
+                    fallback_stream = groq_client.chat.completions.create(
+                        model="openai/gpt-oss-20b",
+                        messages=[
+                            {"role": "system", "content": "You are a direct, concise homework tutor. Format math in LaTeX."},
+                            {"role": "user", "content": user_prompt}
+                        ],
+                        stream=True
+                    )
+                    for chunk in fallback_stream:
+                        content = chunk.choices[0].delta.content
+                        if content:
+                            yield content
+                except Exception as fallback_err:
+                    yield f"Groq Error: {str(fallback_err)}"
 
-        return StreamingResponse(generate_gemini(), media_type="text/event-stream")
+        return StreamingResponse(generate_groq(), media_type="text/plain")
+
+    elif request.model == "gemini":
+        def generate_gemini():
+            try:
+                response = gemini_client.models.generate_content_stream(
+                    model="gemini-2.5-flash",
+                    contents=user_prompt
+                )
+                for chunk in response:
+                    if chunk.text:
+                        yield chunk.text
+            except Exception as e:
+                yield f"Gemini Error: {str(e)}"
+
+        return StreamingResponse(generate_gemini(), media_type="text/plain")
 
     else:
         raise HTTPException(status_code=400, detail="Invalid model selection.")
