@@ -1,4 +1,5 @@
 import os
+import asyncio
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -9,7 +10,6 @@ from supabase import create_client, Client
 
 app = FastAPI(title="Homework AI Backend")
 
-# Allow requests from your Next.js frontend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -18,7 +18,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Reads keys safely from Render's environment variables
 groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 gemini_client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 
@@ -31,6 +30,13 @@ class ChatRequest(BaseModel):
     prompt: str = None
     model: str = "groq"
 
+SYSTEM_PROMPT = (
+    "You are a direct, concise homework tutor. "
+    "Always use clear spacing, new lines, and standard Markdown bullet points or tables. "
+    "Format math using LaTeX delimiters like $...$ for inline or $$...$$ for standalone equations. "
+    "Never repeat sentences or phrases."
+)
+
 @app.get("/")
 def health_check():
     return {"status": "ok", "message": "Homework AI Backend is live!"}
@@ -42,13 +48,13 @@ async def chat_endpoint(request: ChatRequest):
         raise HTTPException(status_code=400, detail="No prompt or message provided.")
 
     if request.model == "groq":
-        def generate_groq():
+        async def generate_groq():
             try:
-                # Primary model call using Qwen 3.6 27B
+                # Primary model
                 stream = groq_client.chat.completions.create(
                     model="qwen/qwen3.6-27b",
                     messages=[
-                        {"role": "system", "content": "You are a direct, concise homework tutor. Format math in LaTeX."},
+                        {"role": "system", "content": SYSTEM_PROMPT},
                         {"role": "user", "content": user_prompt}
                     ],
                     stream=True
@@ -57,28 +63,14 @@ async def chat_endpoint(request: ChatRequest):
                     content = chunk.choices[0].delta.content
                     if content:
                         yield content
+                        await asyncio.sleep(0.01) # Prevents buffer congestion
             except Exception as e:
-                try:
-                    # Fallback model call using GPT-OSS 20B
-                    fallback_stream = groq_client.chat.completions.create(
-                        model="openai/gpt-oss-20b",
-                        messages=[
-                            {"role": "system", "content": "You are a direct, concise homework tutor. Format math in LaTeX."},
-                            {"role": "user", "content": user_prompt}
-                        ],
-                        stream=True
-                    )
-                    for chunk in fallback_stream:
-                        content = chunk.choices[0].delta.content
-                        if content:
-                            yield content
-                except Exception as fallback_err:
-                    yield f"Groq Error: {str(fallback_err)}"
+                yield f"\n[Error: {str(e)}]"
 
-        return StreamingResponse(generate_groq(), media_type="text/plain")
+        return StreamingResponse(generate_groq(), media_type="text/event-stream")
 
     elif request.model == "gemini":
-        def generate_gemini():
+        async def generate_gemini():
             try:
                 response = gemini_client.models.generate_content_stream(
                     model="gemini-2.5-flash",
@@ -87,10 +79,11 @@ async def chat_endpoint(request: ChatRequest):
                 for chunk in response:
                     if chunk.text:
                         yield chunk.text
+                        await asyncio.sleep(0.01)
             except Exception as e:
-                yield f"Gemini Error: {str(e)}"
+                yield f"\n[Error: {str(e)}]"
 
-        return StreamingResponse(generate_gemini(), media_type="text/plain")
+        return StreamingResponse(generate_gemini(), media_type="text/event-stream")
 
     else:
         raise HTTPException(status_code=400, detail="Invalid model selection.")
