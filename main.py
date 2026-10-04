@@ -45,12 +45,11 @@ async def chat_endpoint(request: ChatRequest):
         raise HTTPException(status_code=400, detail="No prompt or message provided.")
 
     system_instructions = (
-        "You are a direct, concise homework tutor. "
-        "Always format mathematical formulas using dollar sign delimiters: "
-        "use $...$ for inline math and $$...$$ for block math equations. "
-        "CRITICAL: Never use square brackets like \\[ ... \\] or [ ... ] for LaTeX equations. "
-        "Example block math format: $$\\sqrt{(x_2-x_1)^2+(y_2-y_1)^2}$$"
-    )
+    "You are a helpful AI homework tutor and academic assistant. "
+    "When answering mathematical or scientific questions, format formulas using LaTeX: "
+    "use $...$ for inline math and $$...$$ for block math equations. "
+    "For general knowledge or non-academic questions, answer accurately and politely using your latest knowledge."
+)
 
     if request.model == "groq":
         def generate_groq():
