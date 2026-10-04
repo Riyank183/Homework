@@ -9,7 +9,7 @@ from supabase import create_client, Client
 
 app = FastAPI(title="Homework AI Backend")
 
-# Allow requests from your Next.js frontend
+# Enable CORS for Next.js frontend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -18,7 +18,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Reads keys safely from Render's environment variables
+# Initialize SDK clients using Render environment variables
 groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 gemini_client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 
@@ -26,14 +26,17 @@ supabase_url = os.environ.get("SUPABASE_URL")
 supabase_key = os.environ.get("SUPABASE_SERVICE_KEY")
 supabase: Client = create_client(supabase_url, supabase_key) if supabase_url and supabase_key else None
 
+
 class ChatRequest(BaseModel):
     message: str = None
     prompt: str = None
     model: str = "groq"
 
+
 @app.get("/")
 def health_check():
     return {"status": "ok", "message": "Homework AI Backend is live!"}
+
 
 @app.post("/api/chat")
 async def chat_endpoint(request: ChatRequest):
@@ -53,12 +56,12 @@ async def chat_endpoint(request: ChatRequest):
         def generate_groq():
             try:
                 stream = groq_client.chat.completions.create(
-                    model="qwen/qwen3.6-27b",
+                    model="llama-3.3-70b-versatile",
                     messages=[
                         {"role": "system", "content": system_instructions},
-                        {"role": "user", "content": user_prompt}
+                        {"role": "user", "content": user_prompt},
                     ],
-                    stream=True
+                    stream=True,
                 )
                 for chunk in stream:
                     content = chunk.choices[0].delta.content
@@ -67,12 +70,12 @@ async def chat_endpoint(request: ChatRequest):
             except Exception as e:
                 try:
                     fallback_stream = groq_client.chat.completions.create(
-                        model="openai/gpt-oss-20b",
+                        model="llama-3.1-8b-instant",
                         messages=[
                             {"role": "system", "content": system_instructions},
-                            {"role": "user", "content": user_prompt}
+                            {"role": "user", "content": user_prompt},
                         ],
-                        stream=True
+                        stream=True,
                     )
                     for chunk in fallback_stream:
                         content = chunk.choices[0].delta.content
@@ -88,7 +91,7 @@ async def chat_endpoint(request: ChatRequest):
             try:
                 response = gemini_client.models.generate_content_stream(
                     model="gemini-2.5-flash",
-                    contents=user_prompt
+                    contents=user_prompt,
                 )
                 for chunk in response:
                     if chunk.text:
@@ -99,9 +102,4 @@ async def chat_endpoint(request: ChatRequest):
         return StreamingResponse(generate_gemini(), media_type="text/plain")
 
     else:
-        raise HTTPException(status_code=400, detail="Invalid model selection.")
-
-        return StreamingResponse(generate_gemini(), media_type="text/plain")
-
-    else:
-        raise HTTPException(status_code=400, detail="Invalid model selection.")
+        raise HTTPException(status_code=400, detail="Invalid model selection specified.")
