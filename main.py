@@ -41,14 +41,21 @@ async def chat_endpoint(request: ChatRequest):
     if not user_prompt:
         raise HTTPException(status_code=400, detail="No prompt or message provided.")
 
- if request.model == "groq":
+    system_instructions = (
+        "You are a direct, concise homework tutor. "
+        "Always format mathematical formulas using dollar sign delimiters: "
+        "use $...$ for inline math and $$...$$ for block math equations. "
+        "CRITICAL: Never use square brackets like \\[ ... \\] or [ ... ] for LaTeX equations. "
+        "Example block math format: $$\\sqrt{(x_2-x_1)^2+(y_2-y_1)^2}$$"
+    )
+
+    if request.model == "groq":
         def generate_groq():
             try:
-                # Primary model call using Qwen 3.6 27B
                 stream = groq_client.chat.completions.create(
                     model="qwen/qwen3.6-27b",
                     messages=[
-                        {"role": "system", "content": "You are a direct, concise homework tutor. Format math in LaTeX."},
+                        {"role": "system", "content": system_instructions},
                         {"role": "user", "content": user_prompt}
                     ],
                     stream=True
@@ -59,11 +66,10 @@ async def chat_endpoint(request: ChatRequest):
                         yield content
             except Exception as e:
                 try:
-                    # Fallback model call using GPT-OSS 20B
                     fallback_stream = groq_client.chat.completions.create(
                         model="openai/gpt-oss-20b",
                         messages=[
-                            {"role": "system", "content": "You are a direct, concise homework tutor. Format math in LaTeX."},
+                            {"role": "system", "content": system_instructions},
                             {"role": "user", "content": user_prompt}
                         ],
                         stream=True
@@ -89,6 +95,11 @@ async def chat_endpoint(request: ChatRequest):
                         yield chunk.text
             except Exception as e:
                 yield f"Gemini Error: {str(e)}"
+
+        return StreamingResponse(generate_gemini(), media_type="text/plain")
+
+    else:
+        raise HTTPException(status_code=400, detail="Invalid model selection.")
 
         return StreamingResponse(generate_gemini(), media_type="text/plain")
 
