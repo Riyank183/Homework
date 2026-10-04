@@ -42,47 +42,38 @@ async def chat_endpoint(request: ChatRequest):
         raise HTTPException(status_code=400, detail="No prompt or message provided.")
 
  if request.model == "groq":
-    def generate_groq():
-        # System prompt explicitly instructing standard KaTeX math formatting
-        system_instructions = (
-    "You are a direct, concise homework tutor. "
-    "Always format mathematical formulas using dollar sign delimiters: "
-    "use $...$ for inline math and $$...$$ for block math equations. "
-    "CRITICAL: Never use square brackets like \[ ... \] or [ ... ] for LaTeX equations. "
-    "Example block math format: $$\\sqrt{(x_2-x_1)^2+(y_2-y_1)^2}$$"
-)
-
-        try:
-            # Primary model call using Qwen 3.6 27B
-            stream = groq_client.chat.completions.create(
-                model="qwen/qwen3.6-27b",
-                messages=[
-                    {"role": "system", "content": system_instructions},
-                    {"role": "user", "content": user_prompt}
-                ],
-                stream=True
-            )
-            for chunk in stream:
-                content = chunk.choices[0].delta.content
-                if content:
-                    yield content
-        except Exception as e:
+        def generate_groq():
             try:
-                # Fallback model call using GPT-OSS 20B
-                fallback_stream = groq_client.chat.completions.create(
-                    model="openai/gpt-oss-20b",
+                # Primary model call using Qwen 3.6 27B
+                stream = groq_client.chat.completions.create(
+                    model="qwen/qwen3.6-27b",
                     messages=[
-                        {"role": "system", "content": system_instructions},
+                        {"role": "system", "content": "You are a direct, concise homework tutor. Format math in LaTeX."},
                         {"role": "user", "content": user_prompt}
                     ],
                     stream=True
                 )
-                for chunk in fallback_stream:
+                for chunk in stream:
                     content = chunk.choices[0].delta.content
                     if content:
                         yield content
-            except Exception as fallback_err:
-                yield f"Groq Error: {str(fallback_err)}"
+            except Exception as e:
+                try:
+                    # Fallback model call using GPT-OSS 20B
+                    fallback_stream = groq_client.chat.completions.create(
+                        model="openai/gpt-oss-20b",
+                        messages=[
+                            {"role": "system", "content": "You are a direct, concise homework tutor. Format math in LaTeX."},
+                            {"role": "user", "content": user_prompt}
+                        ],
+                        stream=True
+                    )
+                    for chunk in fallback_stream:
+                        content = chunk.choices[0].delta.content
+                        if content:
+                            yield content
+                except Exception as fallback_err:
+                    yield f"Groq Error: {str(fallback_err)}"
 
         return StreamingResponse(generate_groq(), media_type="text/plain")
 
