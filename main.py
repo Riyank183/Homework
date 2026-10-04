@@ -56,7 +56,7 @@ async def chat_endpoint(request: ChatRequest):
         def generate_groq():
             try:
                 stream = groq_client.chat.completions.create(
-                    model="llama-3.3-70b-versatile",
+                    model="qwen/qwen3.6-27b",
                     messages=[
                         {"role": "system", "content": system_instructions},
                         {"role": "user", "content": user_prompt},
@@ -70,7 +70,7 @@ async def chat_endpoint(request: ChatRequest):
             except Exception as e:
                 try:
                     fallback_stream = groq_client.chat.completions.create(
-                        model="llama-3.1-8b-instant",
+                        model="openai/gpt-oss-20b",
                         messages=[
                             {"role": "system", "content": system_instructions},
                             {"role": "user", "content": user_prompt},
