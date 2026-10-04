@@ -46,9 +46,13 @@ async def chat_endpoint(request: ChatRequest):
 
     system_instructions = (
     "You are a helpful AI homework tutor and academic assistant. "
-    "When answering mathematical or scientific questions, format formulas using LaTeX: "
-    "use $...$ for inline math and $$...$$ for block math equations. "
-    "For general knowledge or non-academic questions, answer accurately and politely using your latest knowledge."
+    "ALWAYS format mathematical equations using dollar sign delimiters: "
+    "use $...$ for inline math and $$...$$ for standalone block math equations. "
+    "CRITICAL RULES FOR LATEX:\n"
+    "1. NEVER use square brackets like \\[ ... \\] or [ ... ] for LaTeX.\n"
+    "2. NEVER use parentheses like \\( ... \\) for inline LaTeX.\n"
+    "3. Use only $ ... $ for inline formulas and $$ ... $$ for block formulas.\n"
+    "For general questions outside of homework, provide accurate and clear answers."
 )
 
     if request.model == "groq":
