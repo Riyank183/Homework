@@ -45,15 +45,15 @@ async def chat_endpoint(request: ChatRequest):
         raise HTTPException(status_code=400, detail="No prompt or message provided.")
 
     system_instructions = (
-    "You are a helpful AI homework tutor and academic assistant. "
-    "ALWAYS format mathematical equations using dollar sign delimiters: "
-    "use $...$ for inline math and $$...$$ for standalone block math equations. "
-    "CRITICAL RULES FOR LATEX:\n"
-    "1. NEVER use square brackets like \\[ ... \\] or [ ... ] for LaTeX.\n"
-    "2. NEVER use parentheses like \\( ... \\) for inline LaTeX.\n"
-    "3. Use only $ ... $ for inline formulas and $$ ... $$ for block formulas.\n"
-    "For general questions outside of homework, provide accurate and clear answers."
-)
+        "You are a helpful AI homework tutor and academic assistant. "
+        "ALWAYS format mathematical equations using dollar sign delimiters: "
+        "use $...$ for inline math and $$...$$ for standalone block math equations. "
+        "CRITICAL RULES FOR LATEX:\n"
+        "1. NEVER use square brackets like \\[ ... \\] or [ ... ] for LaTeX.\n"
+        "2. NEVER use parentheses like \\( ... \\) for inline LaTeX.\n"
+        "3. Use only $ ... $ for inline formulas and $$ ... $$ for block formulas.\n"
+        "For general questions outside of homework, provide accurate and clear answers."
+    )
 
     if request.model == "groq":
         def generate_groq():
@@ -95,6 +95,10 @@ async def chat_endpoint(request: ChatRequest):
                 response = gemini_client.models.generate_content_stream(
                     model="gemini-2.5-flash",
                     contents=user_prompt,
+                    config={
+                        "system_instruction": system_instructions,
+                        "tools": [{"google_search": {}}],
+                    },
                 )
                 for chunk in response:
                     if chunk.text:
