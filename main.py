@@ -4,11 +4,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from groq import Groq
-from duckduckgo_search import DDGS
+from google import genai
+from supabase import create_client, Client
 
 app = FastAPI(title="Homework AI Backend")
 
-# CORS setup for Next.js frontend
+# Enable CORS for Next.js frontend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -17,7 +18,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Initialize SDK clients using Render environment variables
 groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+gemini_client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+
+supabase_url = os.environ.get("SUPABASE_URL")
+supabase_key = os.environ.get("SUPABASE_SERVICE_KEY")
+supabase: Client = create_client(supabase_url, supabase_key) if supabase_url and supabase_key else None
 
 
 class ChatRequest(BaseModel):
@@ -26,21 +33,9 @@ class ChatRequest(BaseModel):
     model: str = "groq"
 
 
-def get_live_search_context(query: str, max_results: int = 3) -> str:
-    """Performs a live DuckDuckGo web search and formats snippets into text context."""
-    try:
-        with DDGS() as ddgs:
-            results = list(ddgs.text(query, max_results=max_results))
-            if not results:
-                return ""
-            
-            snippets = []
-            for r in results:
-                snippets.append(f"Title: {r.get('title')}\nSnippet: {r.get('body')}")
-            
-            return "\n\n".join(snippets)
-    except Exception:
-        return ""
+@app.get("/")
+def health_check():
+    return {"status": "ok", "message": "Homework AI Backend is live!"}
 
 
 @app.post("/api/chat")
@@ -50,45 +45,64 @@ async def chat_endpoint(request: ChatRequest):
         raise HTTPException(status_code=400, detail="No prompt or message provided.")
 
     system_instructions = (
-        "You are a helpful AI homework tutor and academic assistant. "
-        "ALWAYS format mathematical equations using dollar sign delimiters: "
-        "use $...$ for inline math and $$...$$ for standalone block math equations.\n"
-        "CRITICAL RULES FOR LATEX:\n"
-        "1. NEVER use square brackets like \\[ ... \\] or [ ... ] for LaTeX.\n"
-        "2. NEVER use parentheses like \\( ... \\) for inline LaTeX.\n"
-        "3. Use only $ ... $ for inline formulas and $$ ... $$ for block formulas.\n"
-        "For general questions outside of homework, provide accurate and clear answers based on provided context."
-    )
+    "You are a helpful AI homework tutor and academic assistant. "
+    "ALWAYS format mathematical equations using dollar sign delimiters: "
+    "use $...$ for inline math and $$...$$ for standalone block math equations. "
+    "CRITICAL RULES FOR LATEX:\n"
+    "1. NEVER use square brackets like \\[ ... \\] or [ ... ] for LaTeX.\n"
+    "2. NEVER use parentheses like \\( ... \\) for inline LaTeX.\n"
+    "3. Use only $ ... $ for inline formulas and $$ ... $$ for block formulas.\n"
+    "For general questions outside of homework, provide accurate and clear answers."
+)
 
-    # Detect queries needing fresh real-time info
-    keywords = ["release", "date", "news", "latest", "today", "when", "current", "price", "who is", "game"]
-    needs_search = any(kw in user_prompt.lower() for kw in keywords)
+    if request.model == "groq":
+        def generate_groq():
+            try:
+                stream = groq_client.chat.completions.create(
+                    model="qwen/qwen3.6-27b",
+                    messages=[
+                        {"role": "system", "content": system_instructions},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    stream=True,
+                )
+                for chunk in stream:
+                    content = chunk.choices[0].delta.content
+                    if content:
+                        yield content
+            except Exception as e:
+                try:
+                    fallback_stream = groq_client.chat.completions.create(
+                        model="openai/gpt-oss-20b",
+                        messages=[
+                            {"role": "system", "content": system_instructions},
+                            {"role": "user", "content": user_prompt},
+                        ],
+                        stream=True,
+                    )
+                    for chunk in fallback_stream:
+                        content = chunk.choices[0].delta.content
+                        if content:
+                            yield content
+                except Exception as fallback_err:
+                    yield f"Groq Error: {str(fallback_err)}"
 
-    final_user_prompt = user_prompt
-    if needs_search:
-        search_context = get_live_search_context(user_prompt)
-        if search_context:
-            final_user_prompt = (
-                f"Use the following real-time web search results to answer the user's question accurately:\n\n"
-                f"--- LIVE SEARCH RESULTS ---\n{search_context}\n-----------------------\n\n"
-                f"User Question: {user_prompt}"
-            )
+        return StreamingResponse(generate_groq(), media_type="text/plain")
 
-    def generate_groq():
-        try:
-            stream = groq_client.chat.completions.create(
-                model="qwen/qwen3.6-27b",
-                messages=[
-                    {"role": "system", "content": system_instructions},
-                    {"role": "user", "content": final_user_prompt},
-                ],
-                stream=True,
-            )
-            for chunk in stream:
-                content = chunk.choices[0].delta.content
-                if content:
-                    yield content
-        except Exception as e:
-            yield f"Groq Error: {str(e)}"
+    elif request.model == "gemini":
+        def generate_gemini():
+            try:
+                response = gemini_client.models.generate_content_stream(
+                    model="gemini-2.5-flash",
+                    contents=user_prompt,
+                )
+                for chunk in response:
+                    if chunk.text:
+                        yield chunk.text
+            except Exception as e:
+                yield f"Gemini Error: {str(e)}"
 
-    return StreamingResponse(generate_groq(), media_type="text/plain")
+        return StreamingResponse(generate_gemini(), media_type="text/plain")
+
+    else:
+        raise HTTPException(status_code=400, detail="Invalid model selection specified.")
