@@ -32,8 +32,8 @@ class ChatRequest(BaseModel):
     model: str = "groq"
 
 
-def get_live_search_context(query: str, max_results: int = 3) -> str:
-    """Performs a live DuckDuckGo web search without any API keys."""
+def fetch_duckduckgo_context(query: str, max_results: int = 5) -> str:
+    """Executes DuckDuckGo search and extracts clean result text."""
     try:
         with DDGS() as ddgs:
             results = list(ddgs.text(query, max_results=max_results))
@@ -41,11 +41,15 @@ def get_live_search_context(query: str, max_results: int = 3) -> str:
                 return ""
             
             snippets = []
-            for r in results:
-                snippets.append(f"Title: {r.get('title')}\nSnippet: {r.get('body')}")
+            for item in results:
+                title = item.get("title", "")
+                body = item.get("body", "")
+                if body:
+                    snippets.append(f"- {title}: {body}")
             
-            return "\n\n".join(snippets)
-    except Exception:
+            return "\n".join(snippets)
+    except Exception as e:
+        print(f"Search fetch error: {e}")
         return ""
 
 
@@ -63,27 +67,25 @@ async def chat_endpoint(request: ChatRequest):
     system_instructions = (
         "You are a helpful AI homework tutor and academic assistant. "
         "ALWAYS format mathematical equations using dollar sign delimiters: "
-        "use $...$ for inline math and $$...$$ for standalone block math equations. "
+        "use $...$ for inline math and $$...$$ for standalone block math equations.\n"
         "CRITICAL RULES FOR LATEX:\n"
         "1. NEVER use square brackets like \\[ ... \\] or [ ... ] for LaTeX.\n"
         "2. NEVER use parentheses like \\( ... \\) for inline LaTeX.\n"
         "3. Use only $ ... $ for inline formulas and $$ ... $$ for block formulas.\n"
-        "For general questions outside of homework, provide accurate and clear answers."
+        "For general or current events questions, use the provided live search results to give an accurate, up-to-date answer."
     )
 
-    # Automatically fetch live web context if the query looks time-sensitive or factual
-    search_keywords = ["release", "date", "news", "latest", "today", "when", "current", "price", "who is", "game", "what is"]
-    needs_search = any(kw in user_prompt.lower() for kw in search_keywords)
+    # Perform live web search for context
+    live_context = fetch_duckduckgo_context(user_prompt)
 
-    final_user_prompt = user_prompt
-    if needs_search:
-        search_context = get_live_search_context(user_prompt)
-        if search_context:
-            final_user_prompt = (
-                f"Use the following real-time web search results to answer the user's question accurately:\n\n"
-                f"--- LIVE SEARCH RESULTS ---\n{search_context}\n-----------------------\n\n"
-                f"User Question: {user_prompt}"
-            )
+    if live_context:
+        prompt_with_context = (
+            f"Context from real-time web search:\n{live_context}\n\n"
+            f"User Question: {user_prompt}\n\n"
+            f"Answer the user question accurately using the live search context provided above."
+        )
+    else:
+        prompt_with_context = user_prompt
 
     def generate_groq():
         try:
@@ -91,7 +93,7 @@ async def chat_endpoint(request: ChatRequest):
                 model="qwen/qwen3.6-27b",
                 messages=[
                     {"role": "system", "content": system_instructions},
-                    {"role": "user", "content": final_user_prompt},
+                    {"role": "user", "content": prompt_with_context},
                 ],
                 stream=True,
             )
@@ -105,7 +107,7 @@ async def chat_endpoint(request: ChatRequest):
                     model="openai/gpt-oss-20b",
                     messages=[
                         {"role": "system", "content": system_instructions},
-                        {"role": "user", "content": final_user_prompt},
+                        {"role": "user", "content": prompt_with_context},
                     ],
                     stream=True,
                 )
