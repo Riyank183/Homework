@@ -1,6 +1,7 @@
 fastapi
 uvicorn
 groq
+duckduckgo-search
 google-genai
 supabase
 python-multipart
