@@ -5,6 +5,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from groq import Groq
 from google import genai
+from google.genai import types
 from supabase import create_client, Client
 
 app = FastAPI(title="Homework AI Backend")
@@ -33,6 +34,25 @@ class ChatRequest(BaseModel):
     model: str = "groq"
 
 
+SYSTEM_INSTRUCTIONS = (
+    "You are a helpful AI homework tutor and academic assistant.\n\n"
+    "STRICT MATHEMATICAL FORMATTING RULES:\n"
+    "1. ALL math variables, terms, set notations, and expressions MUST be wrapped in LaTeX delimiters.\n"
+    "2. For inline math, use EXACTLY single dollar signs: $...$\n"
+    "3. For standalone block equations, use EXACTLY double dollar signs: $$...$$\n"
+    "4. NEVER use square brackets like [ ... ] or \\[ ... \\] for math equations.\n"
+    "5. NEVER use parentheses like ( ... ) or \\( ... \\) for math equations.\n"
+    "6. ALWAYS include proper backslashes for commands (e.g., \\sqrt{}, \\mathbb{}, \\dots, \\cdot).\n\n"
+    "EXAMPLES OF CORRECT FORMATTING:\n"
+    "- Inline: The distance in $\\mathbb{R}^n$ between $P$ and $Q$.\n"
+    "- Block:\n"
+    "$$d(P, Q) = \\sqrt{\\sum_{i=1}^n (p_i - q_i)^2}$$\n\n"
+    "EXAMPLES OF INCORRECT FORMATTING (NEVER DO THIS):\n"
+    "- Incorrect: [ d(x,y)=\\sqrt{x+y} ]\n"
+    "- Incorrect: (\\mathbb{R}^n)"
+)
+
+
 @app.get("/")
 def health_check():
     return {"status": "ok", "message": "Homework AI Backend is live!"}
@@ -44,26 +64,16 @@ async def chat_endpoint(request: ChatRequest):
     if not user_prompt:
         raise HTTPException(status_code=400, detail="No prompt or message provided.")
 
-    system_instructions = (
-    "You are a helpful AI homework tutor and academic assistant. "
-    "ALWAYS format mathematical equations using dollar sign delimiters: "
-    "use $...$ for inline math and $$...$$ for standalone block math equations. "
-    "CRITICAL RULES FOR LATEX:\n"
-    "1. NEVER use square brackets like \\[ ... \\] or [ ... ] for LaTeX.\n"
-    "2. NEVER use parentheses like \\( ... \\) for inline LaTeX.\n"
-    "3. Use only $ ... $ for inline formulas and $$ ... $$ for block formulas.\n"
-    "For general questions outside of homework, provide accurate and clear answers."
-)
-
     if request.model == "groq":
         def generate_groq():
             try:
                 stream = groq_client.chat.completions.create(
                     model="qwen/qwen3.6-27b",
                     messages=[
-                        {"role": "system", "content": system_instructions},
+                        {"role": "system", "content": SYSTEM_INSTRUCTIONS},
                         {"role": "user", "content": user_prompt},
                     ],
+                    temperature=0.2,  # Lower temperature reduces LaTeX formatting errors
                     stream=True,
                 )
                 for chunk in stream:
@@ -75,9 +85,10 @@ async def chat_endpoint(request: ChatRequest):
                     fallback_stream = groq_client.chat.completions.create(
                         model="openai/gpt-oss-20b",
                         messages=[
-                            {"role": "system", "content": system_instructions},
+                            {"role": "system", "content": SYSTEM_INSTRUCTIONS},
                             {"role": "user", "content": user_prompt},
                         ],
+                        temperature=0.2,
                         stream=True,
                     )
                     for chunk in fallback_stream:
@@ -92,9 +103,16 @@ async def chat_endpoint(request: ChatRequest):
     elif request.model == "gemini":
         def generate_gemini():
             try:
+                # Enables native Google Search grounding for up-to-date real-time results
+                config = types.GenerateContentConfig(
+                    system_instruction=SYSTEM_INSTRUCTIONS,
+                    tools=[{"google_search": {}}],
+                    temperature=0.2,
+                )
                 response = gemini_client.models.generate_content_stream(
-                    model="gemini-3.8-flash",
+                    model="gemini-3.8-flash",  # Updated to official current model family
                     contents=user_prompt,
+                    config=config,
                 )
                 for chunk in response:
                     if chunk.text:
