@@ -32,7 +32,7 @@ class ChatRequest(BaseModel):
     model: str = "groq"
 
 
-def fetch_duckduckgo_context(query: str, max_results: int = 5) -> str:
+def fetch_duckduckgo_context(query: str, max_results: int = 4) -> str:
     """Executes DuckDuckGo search and extracts clean result text."""
     try:
         with DDGS() as ddgs:
@@ -45,9 +45,9 @@ def fetch_duckduckgo_context(query: str, max_results: int = 5) -> str:
                 title = item.get("title", "")
                 body = item.get("body", "")
                 if body:
-                    snippets.append(f"- {title}: {body}")
+                    snippets.append(f"Source: {title}\nSummary: {body}")
             
-            return "\n".join(snippets)
+            return "\n\n".join(snippets)
     except Exception as e:
         print(f"Search fetch error: {e}")
         return ""
@@ -65,14 +65,15 @@ async def chat_endpoint(request: ChatRequest):
         raise HTTPException(status_code=400, detail="No prompt or message provided.")
 
     system_instructions = (
-        "You are a helpful AI homework tutor and academic assistant. "
+        "You are a helpful AI homework tutor and academic assistant.\n"
+        "Do NOT call any functions or tools. Respond ONLY with direct text.\n"
         "ALWAYS format mathematical equations using dollar sign delimiters: "
         "use $...$ for inline math and $$...$$ for standalone block math equations.\n"
         "CRITICAL RULES FOR LATEX:\n"
         "1. NEVER use square brackets like \\[ ... \\] or [ ... ] for LaTeX.\n"
         "2. NEVER use parentheses like \\( ... \\) for inline LaTeX.\n"
         "3. Use only $ ... $ for inline formulas and $$ ... $$ for block formulas.\n"
-        "For general or current events questions, use the provided live search results to give an accurate, up-to-date answer."
+        "If real-time search context is provided in <search_results>, use it to answer factual or current questions accurately."
     )
 
     # Perform live web search for context
@@ -80,9 +81,9 @@ async def chat_endpoint(request: ChatRequest):
 
     if live_context:
         prompt_with_context = (
-            f"Context from real-time web search:\n{live_context}\n\n"
-            f"User Question: {user_prompt}\n\n"
-            f"Answer the user question accurately using the live search context provided above."
+            f"Here is reference web context for the user query:\n"
+            f"<search_results>\n{live_context}\n</search_results>\n\n"
+            f"User Question: {user_prompt}"
         )
     else:
         prompt_with_context = user_prompt
