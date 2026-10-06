@@ -9,6 +9,7 @@ from supabase import create_client, Client
 
 app = FastAPI(title="Homework AI Backend")
 
+# Enable CORS for Next.js frontend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -17,6 +18,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Initialize SDK clients using Render environment variables
 groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 gemini_client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 
@@ -90,9 +92,9 @@ async def chat_endpoint(request: ChatRequest):
     elif request.model == "gemini":
         def generate_gemini():
             try:
-                # Primary model endpoint with Google Search enabled
+                # Using stable gemini-3.6-flash on free tier with search grounding
                 response = gemini_client.models.generate_content_stream(
-                    model="gemini-2.5-flash",
+                    model="gemini-3.6-flash",
                     contents=user_prompt,
                     config={
                         "system_instruction": system_instructions,
@@ -103,9 +105,7 @@ async def chat_endpoint(request: ChatRequest):
                     if chunk.text:
                         yield chunk.text
             except Exception as e:
-                # Catch rate limits or 404s and fallback cleanly to Groq/Qwen
-                if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-                    yield "Gemini rate limit exceeded. Redirecting to backup engine...\n\n"
+                # Fall back to Groq smoothly if Gemini hits any tier exception
                 try:
                     stream = groq_client.chat.completions.create(
                         model="qwen/qwen3.6-27b",
@@ -119,8 +119,8 @@ async def chat_endpoint(request: ChatRequest):
                         content = chunk.choices[0].delta.content
                         if content:
                             yield content
-                except Exception as groq_err:
-                    yield f"Error: {str(e)}"
+                except Exception:
+                    yield f"Gemini Error: {str(e)}"
 
         return StreamingResponse(generate_gemini(), media_type="text/plain")
 
