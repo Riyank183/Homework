@@ -93,7 +93,7 @@ async def chat_endpoint(request: ChatRequest):
         def generate_gemini():
             try:
                 response = gemini_client.models.generate_content_stream(
-                    model="gemini-2.5-flash",
+                    model="gemini-3.8-flash",
                     contents=user_prompt,
                 )
                 for chunk in response:
