@@ -35,30 +35,35 @@ class ChatRequest(BaseModel):
 
 SYSTEM_INSTRUCTIONS = r"""You are an expert AI homework tutor.
 
-CRITICAL MATHEMATICAL FORMATTING RULES:
-1. Every mathematical variable, number in an equation, fraction, or formula MUST be enclosed in dollar sign delimiters.
-2. Use single dollar signs $ ... $ for inline math expressions (e.g., $x = 4$ or $3x^2 - 11x - 4 = 0$).
-3. Use double dollar signs $$ ... $$ for standalone centered block equations.
-4. STRICTLY PROHIBITED: NEVER use \[ ... \] or \( ... \) or raw square brackets [ ... ] or parentheses ( ... ) around equations.
-5. Always use standard LaTeX syntax like \frac{a}{b}, \sqrt{}, \pm, and \quad.
-
-EXAMPLE OF CORRECT FORMATTING:
-To solve the quadratic equation $3x^2 - 11x - 4 = 0$, use the quadratic formula:
-$$x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}$$
-Here $a = 3$, $b = -11$, and $c = -4$.
+STRICT MATHEMATICAL FORMATTING RULES:
+1. ALWAYS use dollar sign delimiters for all mathematical equations, variables, numbers, percentages, and formulas.
+2. Inline math MUST use single dollar signs: $...$ (e.g., $x = 4$, $15\%$, or $\text{price} = 2400$).
+3. Standalone block equations MUST use double dollar signs: $$...$$
+4. ABSOLUTE PROHIBITION: NEVER use square brackets like \[ ... \] or single [ ... ] or parentheses \( ... \) for equations.
+5. ALWAYS format fractions using \frac{a}{b} and ensure text inside math blocks uses \text{...}.
 """
 
 
 def clean_math_delimiters(text: str) -> str:
-    """Converts non-standard LaTeX delimiters to KaTeX-compatible $ and $$ syntax."""
+    """Universal LaTeX sanitizer that converts ALL non-standard math delimiters to $ and $$ syntax."""
     if not text:
         return ""
-    # Convert \[ ... \] to $$ ... $$
+
+    # 1. Convert standard LaTeX block math \[ ... \] to $$ ... $$
     text = re.sub(r'\\\[\s*(.*?)\s*\\\]', r'$$\1$$', text, flags=re.DOTALL)
-    # Convert \( ... \) to $ ... $
+    
+    # 2. Convert inline math \( ... \) to $ ... $
     text = re.sub(r'\\\(\s*(.*?)\s*\\\)', r'$\1$', text, flags=re.DOTALL)
-    # Convert standalone bracketed math expressions like [ 3x^2-11x-4=0 ] to $$ ... $$
-    text = re.sub(r'(?<!\S)\[\s*([0-9xX\+\-\=\\\s\.\,\/\^\_\{\}\(\)a-zA-Z]+)\s*\](?!\S)', r'$$\1$$', text)
+
+    # 3. Fix unclosed/dangling [ \text{...} or [ math expressions (convert standalone opening [ to $$)
+    text = re.sub(r'(?<!\S)\[\s*(\\text\{|\\frac\{|[0-9xX\+\-\=\\\s\.\,\/\^\_\{\}\(\)a-zA-Z]+)', r'$$\1', text)
+
+    # 4. Clean up any leftover trailing raw ] at the end of math statements
+    text = re.sub(r'(\\text\{[^\}]+\}|[0-9xX\+\-\=\\\s\.\,\/\^\_\{\}\(\)a-zA-Z]+)\s*\](?!\S)', r'\1$$', text)
+
+    # 5. Fix double-yield dollar sign duplications if any
+    text = text.replace("$$$$", "$$")
+    
     return text
 
 
@@ -86,7 +91,6 @@ async def chat_endpoint(request: ChatRequest):
                     stream=True,
                 )
 
-                # Use a small sliding buffer so opening and closing delimiters in separate chunks get caught
                 accumulated_text = ""
                 last_sent_len = 0
 
@@ -96,7 +100,6 @@ async def chat_endpoint(request: ChatRequest):
                         accumulated_text += content
                         sanitized_full = clean_math_delimiters(accumulated_text)
                         
-                        # Only yield newly sanitized delta content
                         new_delta = sanitized_full[last_sent_len:]
                         if new_delta:
                             yield new_delta
