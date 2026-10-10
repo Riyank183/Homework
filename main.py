@@ -1,5 +1,4 @@
 import os
-import re
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -11,6 +10,7 @@ from supabase import create_client, Client
 
 app = FastAPI(title="Homework AI Backend")
 
+# Enable CORS for Next.js frontend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -19,6 +19,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Initialize SDK clients using Render environment variables
 groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 gemini_client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 
@@ -33,38 +34,16 @@ class ChatRequest(BaseModel):
     model: str = "groq"
 
 
-SYSTEM_INSTRUCTIONS = r"""You are an expert AI homework tutor.
-
-STRICT MATHEMATICAL FORMATTING RULES:
-1. ALWAYS use dollar sign delimiters for all mathematical equations, variables, numbers, percentages, and formulas.
-2. Inline math MUST use single dollar signs: $...$ (e.g., $x = 4$, $15\%$, or $\text{price} = 2400$).
-3. Standalone block equations MUST use double dollar signs: $$...$$
-4. ABSOLUTE PROHIBITION: NEVER use square brackets like \[ ... \] or single [ ... ] or parentheses \( ... \) for equations.
-5. ALWAYS format fractions using \frac{a}{b} and ensure text inside math blocks uses \text{...}.
-"""
-
-
-def clean_math_delimiters(text: str) -> str:
-    """Universal LaTeX sanitizer that converts ALL non-standard math delimiters to $ and $$ syntax."""
-    if not text:
-        return ""
-
-    # 1. Convert standard LaTeX block math \[ ... \] to $$ ... $$
-    text = re.sub(r'\\\[\s*(.*?)\s*\\\]', r'$$\1$$', text, flags=re.DOTALL)
-    
-    # 2. Convert inline math \( ... \) to $ ... $
-    text = re.sub(r'\\\(\s*(.*?)\s*\\\)', r'$\1$', text, flags=re.DOTALL)
-
-    # 3. Fix unclosed/dangling [ \text{...} or [ math expressions (convert standalone opening [ to $$)
-    text = re.sub(r'(?<!\S)\[\s*(\\text\{|\\frac\{|[0-9xX\+\-\=\\\s\.\,\/\^\_\{\}\(\)a-zA-Z]+)', r'$$\1', text)
-
-    # 4. Clean up any leftover trailing raw ] at the end of math statements
-    text = re.sub(r'(\\text\{[^\}]+\}|[0-9xX\+\-\=\\\s\.\,\/\^\_\{\}\(\)a-zA-Z]+)\s*\](?!\S)', r'\1$$', text)
-
-    # 5. Fix double-yield dollar sign duplications if any
-    text = text.replace("$$$$", "$$")
-    
-    return text
+# Universal System Prompt - Applies to ALL academic topics
+SYSTEM_INSTRUCTIONS = (
+    "You are an expert AI homework tutor.\n\n"
+    "MATHEMATICAL FORMATTING RULES:\n"
+    "1. Always wrap inline mathematical variables, numbers, and short expressions in single dollar signs: $...$\n"
+    "2. Always wrap centered standalone equations and formulas in double dollar signs: $$...$$\n"
+    "3. NEVER use square brackets like \\[ ... \\] or [ ... ] for equations.\n"
+    "4. NEVER use parentheses like \\( ... \\) for inline math.\n"
+    "5. Use standard LaTeX syntax (e.g., \\frac{a}{b}, \\sqrt{}, \\int, \\sum, \\text{})."
+)
 
 
 @app.get("/")
@@ -90,21 +69,10 @@ async def chat_endpoint(request: ChatRequest):
                     temperature=0.1,
                     stream=True,
                 )
-
-                accumulated_text = ""
-                last_sent_len = 0
-
                 for chunk in stream:
                     content = chunk.choices[0].delta.content
                     if content:
-                        accumulated_text += content
-                        sanitized_full = clean_math_delimiters(accumulated_text)
-                        
-                        new_delta = sanitized_full[last_sent_len:]
-                        if new_delta:
-                            yield new_delta
-                            last_sent_len = len(sanitized_full)
-
+                        yield content
             except Exception as e:
                 try:
                     fallback_stream = groq_client.chat.completions.create(
@@ -116,17 +84,10 @@ async def chat_endpoint(request: ChatRequest):
                         temperature=0.1,
                         stream=True,
                     )
-                    accumulated_text = ""
-                    last_sent_len = 0
                     for chunk in fallback_stream:
                         content = chunk.choices[0].delta.content
                         if content:
-                            accumulated_text += content
-                            sanitized_full = clean_math_delimiters(accumulated_text)
-                            new_delta = sanitized_full[last_sent_len:]
-                            if new_delta:
-                                yield new_delta
-                                last_sent_len = len(sanitized_full)
+                            yield content
                 except Exception as fallback_err:
                     yield f"Groq Error: {str(fallback_err)}"
 
@@ -141,20 +102,13 @@ async def chat_endpoint(request: ChatRequest):
                     temperature=0.1,
                 )
                 response = gemini_client.models.generate_content_stream(
-                    model="gemini-3.8-flash",
+                    model="gemini-2.5-flash",
                     contents=user_prompt,
                     config=config,
                 )
-                accumulated_text = ""
-                last_sent_len = 0
                 for chunk in response:
                     if chunk.text:
-                        accumulated_text += chunk.text
-                        sanitized_full = clean_math_delimiters(accumulated_text)
-                        new_delta = sanitized_full[last_sent_len:]
-                        if new_delta:
-                            yield new_delta
-                            last_sent_len = len(sanitized_full)
+                        yield chunk.text
             except Exception as e:
                 yield f"Gemini Error: {str(e)}"
 
