@@ -1,4 +1,5 @@
 import os
+import re
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -34,22 +35,32 @@ class ChatRequest(BaseModel):
     model: str = "groq"
 
 
+def sanitize_latex(text: str) -> str:
+    """Converts non-standard LaTeX delimiters into KaTeX-compatible $ and $$ syntax."""
+    if not text:
+        return ""
+    # Convert block math \[ ... \] to $$ ... $$
+    text = re.sub(r'\\\[\s*(.*?)\s*\\\]', r'$$\1$$', text, flags=re.DOTALL)
+    # Convert inline math \( ... \) to $ ... $
+    text = re.sub(r'\\\(\s*(.*?)\s*\\\)', r'$\1$', text, flags=re.DOTALL)
+    # Convert standalone bracketed math expressions like [ 2x + 1 = 1.10 ] to block math
+    text = re.sub(r'(?<!\S)\[\s*([0-9xX\+\-\=\\\s\.\,\/a-zA-Z\(\)]+)\s*\](?!\S)', r'$$\1$$', text)
+    return text
+
+
 SYSTEM_INSTRUCTIONS = (
-    "You are a helpful AI homework tutor and academic assistant.\n\n"
-    "STRICT MATHEMATICAL FORMATTING RULES:\n"
-    "1. ALL math variables, terms, set notations, and expressions MUST be wrapped in LaTeX delimiters.\n"
+    "You are an expert AI homework tutor and academic assistant.\n\n"
+    "CRITICAL FORMATTING INSTRUCTIONS FOR LATEX MATH:\n"
+    "1. ALL math variables, numbers inside equations, fractions, and symbols MUST be wrapped in LaTeX delimiters.\n"
     "2. For inline math, use EXACTLY single dollar signs: $...$\n"
-    "3. For standalone block equations, use EXACTLY double dollar signs: $$...$$\n"
-    "4. NEVER use square brackets like [ ... ] or \\[ ... \\] for math equations.\n"
-    "5. NEVER use parentheses like ( ... ) or \\( ... \\) for math equations.\n"
-    "6. ALWAYS include proper backslashes for commands (e.g., \\sqrt{}, \\mathbb{}, \\dots, \\cdot).\n\n"
+    "3. For standalone block math, use EXACTLY double dollar signs: $$...$$\n"
+    "4. NEVER use square brackets like [ ... ] or \\[ ... \\] for math.\n"
+    "5. NEVER use round parentheses like ( ... ) or \\( ... \\) for math.\n"
+    "6. ALWAYS use standard LaTeX math syntax such as \\frac{a}{b}, \\cdot, \\sqrt{}, and \\mathbf{}.\n\n"
     "EXAMPLES OF CORRECT FORMATTING:\n"
-    "- Inline: The distance in $\\mathbb{R}^n$ between $P$ and $Q$.\n"
+    "- Inline: Let $x$ be the cost of the ball and $x + 1.00$ be the cost of the bat.\n"
     "- Block:\n"
-    "$$d(P, Q) = \\sqrt{\\sum_{i=1}^n (p_i - q_i)^2}$$\n\n"
-    "EXAMPLES OF INCORRECT FORMATTING (NEVER DO THIS):\n"
-    "- Incorrect: [ d(x,y)=\\sqrt{x+y} ]\n"
-    "- Incorrect: (\\mathbb{R}^n)"
+    "$$2x + 1.00 = 1.10 \\implies 2x = 0.10 \\implies x = 0.05$$\n"
 )
 
 
@@ -73,13 +84,13 @@ async def chat_endpoint(request: ChatRequest):
                         {"role": "system", "content": SYSTEM_INSTRUCTIONS},
                         {"role": "user", "content": user_prompt},
                     ],
-                    temperature=0.2,  # Lower temperature reduces LaTeX formatting errors
+                    temperature=0.1,  # Lower temperature prevents arbitrary formatting deviations
                     stream=True,
                 )
                 for chunk in stream:
                     content = chunk.choices[0].delta.content
                     if content:
-                        yield content
+                        yield sanitize_latex(content)
             except Exception as e:
                 try:
                     fallback_stream = groq_client.chat.completions.create(
@@ -88,13 +99,13 @@ async def chat_endpoint(request: ChatRequest):
                             {"role": "system", "content": SYSTEM_INSTRUCTIONS},
                             {"role": "user", "content": user_prompt},
                         ],
-                        temperature=0.2,
+                        temperature=0.1,
                         stream=True,
                     )
                     for chunk in fallback_stream:
                         content = chunk.choices[0].delta.content
                         if content:
-                            yield content
+                            yield sanitize_latex(content)
                 except Exception as fallback_err:
                     yield f"Groq Error: {str(fallback_err)}"
 
@@ -103,20 +114,19 @@ async def chat_endpoint(request: ChatRequest):
     elif request.model == "gemini":
         def generate_gemini():
             try:
-                # Enables native Google Search grounding for up-to-date real-time results
                 config = types.GenerateContentConfig(
                     system_instruction=SYSTEM_INSTRUCTIONS,
                     tools=[{"google_search": {}}],
-                    temperature=0.2,
+                    temperature=0.1,
                 )
                 response = gemini_client.models.generate_content_stream(
-                    model="gemini-3.8-flash",  # Updated to official current model family
+                    model="gemini-3.8-flash",
                     contents=user_prompt,
                     config=config,
                 )
                 for chunk in response:
                     if chunk.text:
-                        yield chunk.text
+                        yield sanitize_latex(chunk.text)
             except Exception as e:
                 yield f"Gemini Error: {str(e)}"
 
