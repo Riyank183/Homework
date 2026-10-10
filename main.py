@@ -11,7 +11,6 @@ from supabase import create_client, Client
 
 app = FastAPI(title="Homework AI Backend")
 
-# Enable CORS for Next.js frontend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -20,7 +19,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize SDK clients using Render environment variables
 groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 gemini_client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 
@@ -35,33 +33,33 @@ class ChatRequest(BaseModel):
     model: str = "groq"
 
 
-def sanitize_latex(text: str) -> str:
-    """Converts non-standard LaTeX delimiters into KaTeX-compatible $ and $$ syntax."""
+SYSTEM_INSTRUCTIONS = r"""You are an expert AI homework tutor.
+
+CRITICAL MATHEMATICAL FORMATTING RULES:
+1. Every mathematical variable, number in an equation, fraction, or formula MUST be enclosed in dollar sign delimiters.
+2. Use single dollar signs $ ... $ for inline math expressions (e.g., $x = 4$ or $3x^2 - 11x - 4 = 0$).
+3. Use double dollar signs $$ ... $$ for standalone centered block equations.
+4. STRICTLY PROHIBITED: NEVER use \[ ... \] or \( ... \) or raw square brackets [ ... ] or parentheses ( ... ) around equations.
+5. Always use standard LaTeX syntax like \frac{a}{b}, \sqrt{}, \pm, and \quad.
+
+EXAMPLE OF CORRECT FORMATTING:
+To solve the quadratic equation $3x^2 - 11x - 4 = 0$, use the quadratic formula:
+$$x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}$$
+Here $a = 3$, $b = -11$, and $c = -4$.
+"""
+
+
+def clean_math_delimiters(text: str) -> str:
+    """Converts non-standard LaTeX delimiters to KaTeX-compatible $ and $$ syntax."""
     if not text:
         return ""
-    # Convert block math \[ ... \] to $$ ... $$
+    # Convert \[ ... \] to $$ ... $$
     text = re.sub(r'\\\[\s*(.*?)\s*\\\]', r'$$\1$$', text, flags=re.DOTALL)
-    # Convert inline math \( ... \) to $ ... $
+    # Convert \( ... \) to $ ... $
     text = re.sub(r'\\\(\s*(.*?)\s*\\\)', r'$\1$', text, flags=re.DOTALL)
-    # Convert standalone bracketed math expressions like [ 2x + 1 = 1.10 ] to block math
-    text = re.sub(r'(?<!\S)\[\s*([0-9xX\+\-\=\\\s\.\,\/a-zA-Z\(\)]+)\s*\](?!\S)', r'$$\1$$', text)
+    # Convert standalone bracketed math expressions like [ 3x^2-11x-4=0 ] to $$ ... $$
+    text = re.sub(r'(?<!\S)\[\s*([0-9xX\+\-\=\\\s\.\,\/\^\_\{\}\(\)a-zA-Z]+)\s*\](?!\S)', r'$$\1$$', text)
     return text
-
-
-SYSTEM_INSTRUCTIONS = (
-    "You are an expert AI homework tutor and academic assistant.\n\n"
-    "CRITICAL FORMATTING INSTRUCTIONS FOR LATEX MATH:\n"
-    "1. ALL math variables, numbers inside equations, fractions, and symbols MUST be wrapped in LaTeX delimiters.\n"
-    "2. For inline math, use EXACTLY single dollar signs: $...$\n"
-    "3. For standalone block math, use EXACTLY double dollar signs: $$...$$\n"
-    "4. NEVER use square brackets like [ ... ] or \\[ ... \\] for math.\n"
-    "5. NEVER use round parentheses like ( ... ) or \\( ... \\) for math.\n"
-    "6. ALWAYS use standard LaTeX math syntax such as \\frac{a}{b}, \\cdot, \\sqrt{}, and \\mathbf{}.\n\n"
-    "EXAMPLES OF CORRECT FORMATTING:\n"
-    "- Inline: Let $x$ be the cost of the ball and $x + 1.00$ be the cost of the bat.\n"
-    "- Block:\n"
-    "$$2x + 1.00 = 1.10 \\implies 2x = 0.10 \\implies x = 0.05$$\n"
-)
 
 
 @app.get("/")
@@ -84,13 +82,26 @@ async def chat_endpoint(request: ChatRequest):
                         {"role": "system", "content": SYSTEM_INSTRUCTIONS},
                         {"role": "user", "content": user_prompt},
                     ],
-                    temperature=0.1,  # Lower temperature prevents arbitrary formatting deviations
+                    temperature=0.1,
                     stream=True,
                 )
+
+                # Use a small sliding buffer so opening and closing delimiters in separate chunks get caught
+                accumulated_text = ""
+                last_sent_len = 0
+
                 for chunk in stream:
                     content = chunk.choices[0].delta.content
                     if content:
-                        yield sanitize_latex(content)
+                        accumulated_text += content
+                        sanitized_full = clean_math_delimiters(accumulated_text)
+                        
+                        # Only yield newly sanitized delta content
+                        new_delta = sanitized_full[last_sent_len:]
+                        if new_delta:
+                            yield new_delta
+                            last_sent_len = len(sanitized_full)
+
             except Exception as e:
                 try:
                     fallback_stream = groq_client.chat.completions.create(
@@ -102,10 +113,17 @@ async def chat_endpoint(request: ChatRequest):
                         temperature=0.1,
                         stream=True,
                     )
+                    accumulated_text = ""
+                    last_sent_len = 0
                     for chunk in fallback_stream:
                         content = chunk.choices[0].delta.content
                         if content:
-                            yield sanitize_latex(content)
+                            accumulated_text += content
+                            sanitized_full = clean_math_delimiters(accumulated_text)
+                            new_delta = sanitized_full[last_sent_len:]
+                            if new_delta:
+                                yield new_delta
+                                last_sent_len = len(sanitized_full)
                 except Exception as fallback_err:
                     yield f"Groq Error: {str(fallback_err)}"
 
@@ -124,9 +142,16 @@ async def chat_endpoint(request: ChatRequest):
                     contents=user_prompt,
                     config=config,
                 )
+                accumulated_text = ""
+                last_sent_len = 0
                 for chunk in response:
                     if chunk.text:
-                        yield sanitize_latex(chunk.text)
+                        accumulated_text += chunk.text
+                        sanitized_full = clean_math_delimiters(accumulated_text)
+                        new_delta = sanitized_full[last_sent_len:]
+                        if new_delta:
+                            yield new_delta
+                            last_sent_len = len(sanitized_full)
             except Exception as e:
                 yield f"Gemini Error: {str(e)}"
 
