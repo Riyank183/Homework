@@ -102,7 +102,7 @@ async def chat_endpoint(request: ChatRequest):
                     temperature=0.1,
                 )
                 response = gemini_client.models.generate_content_stream(
-                    model="gemini-3.8-live",
+                    model="gemini-3.5-flash-lite",
                     contents=user_prompt,
                     config=config,
                 )
