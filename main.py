@@ -1,11 +1,10 @@
 import os
+import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from groq import Groq
-from google import genai
-from google.genai import types
 from supabase import create_client, Client
 
 app = FastAPI(title="Homework AI Backend")
@@ -21,7 +20,7 @@ app.add_middleware(
 
 # Initialize SDK clients using Render environment variables
 groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
-gemini_client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+tavily_api_key = os.environ.get("TAVILY_API_KEY")
 
 supabase_url = os.environ.get("SUPABASE_URL")
 supabase_key = os.environ.get("SUPABASE_SERVICE_KEY")
@@ -36,7 +35,7 @@ class ChatRequest(BaseModel):
 
 # Universal System Prompt - Applies to ALL academic topics
 SYSTEM_INSTRUCTIONS = (
-    "You are an expert AI homework tutor.\n\n"
+    "You are an expert AI homework tutor and up-to-date research assistant.\n\n"
     "MATHEMATICAL FORMATTING RULES:\n"
     "1. Always wrap inline mathematical variables, numbers, and short expressions in single dollar signs: $...$\n"
     "2. Always wrap centered standalone equations and formulas in double dollar signs: $$...$$\n"
@@ -44,6 +43,35 @@ SYSTEM_INSTRUCTIONS = (
     "4. NEVER use parentheses like \\( ... \\) for inline math.\n"
     "5. Use standard LaTeX syntax (e.g., \\frac{a}{b}, \\sqrt{}, \\int, \\sum, \\text{})."
 )
+
+
+# Helper function to fetch live web context using Tavily API
+async def fetch_tavily_context(query: str) -> str:
+    if not tavily_api_key:
+        return ""
+    
+    url = "https://api.tavily.com/search"
+    payload = {
+        "api_key": tavily_api_key,
+        "query": query,
+        "max_results": 3,
+        "search_depth": "basic"
+    }
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, json=payload, timeout=5.0)
+            if response.status_code == 200:
+                results = response.json().get("results", [])
+                if not results:
+                    return ""
+                
+                snippets = [f"- {r.get('title')}: {r.get('content')}" for r in results]
+                return f"\n\n[LIVE WEB SEARCH CONTEXT - CURRENT YEAR 2026]:\n" + "\n".join(snippets) + "\n"
+    except Exception as e:
+        print(f"Tavily search error: {e}")
+    
+    return ""
 
 
 @app.get("/")
@@ -57,62 +85,41 @@ async def chat_endpoint(request: ChatRequest):
     if not user_prompt:
         raise HTTPException(status_code=400, detail="No prompt or message provided.")
 
-    if request.model == "groq":
-        def generate_groq():
+    # Automatically fetch live web context via Tavily for up-to-date answers
+    web_context = await fetch_tavily_context(user_prompt)
+    enhanced_prompt = user_prompt + web_context
+
+    def generate_groq():
+        try:
+            stream = groq_client.chat.completions.create(
+                model="qwen/qwen3.6-27b",
+                messages=[
+                    {"role": "system", "content": SYSTEM_INSTRUCTIONS},
+                    {"role": "user", "content": enhanced_prompt},
+                ],
+                temperature=0.1,
+                stream=True,
+            )
+            for chunk in stream:
+                content = chunk.choices[0].delta.content
+                if content:
+                    yield content
+        except Exception as e:
             try:
-                stream = groq_client.chat.completions.create(
-                    model="qwen/qwen3.6-27b",
+                fallback_stream = groq_client.chat.completions.create(
+                    model="openai/gpt-oss-20b",
                     messages=[
                         {"role": "system", "content": SYSTEM_INSTRUCTIONS},
-                        {"role": "user", "content": user_prompt},
+                        {"role": "user", "content": enhanced_prompt},
                     ],
                     temperature=0.1,
                     stream=True,
                 )
-                for chunk in stream:
+                for chunk in fallback_stream:
                     content = chunk.choices[0].delta.content
                     if content:
                         yield content
-            except Exception as e:
-                try:
-                    fallback_stream = groq_client.chat.completions.create(
-                        model="openai/gpt-oss-20b",
-                        messages=[
-                            {"role": "system", "content": SYSTEM_INSTRUCTIONS},
-                            {"role": "user", "content": user_prompt},
-                        ],
-                        temperature=0.1,
-                        stream=True,
-                    )
-                    for chunk in fallback_stream:
-                        content = chunk.choices[0].delta.content
-                        if content:
-                            yield content
-                except Exception as fallback_err:
-                    yield f"Groq Error: {str(fallback_err)}"
+            except Exception as fallback_err:
+                yield f"Groq Error: {str(fallback_err)}"
 
-        return StreamingResponse(generate_groq(), media_type="text/plain")
-
-    elif request.model == "gemini":
-        def generate_gemini():
-            try:
-                config = types.GenerateContentConfig(
-                    system_instruction=SYSTEM_INSTRUCTIONS,
-                    tools=[{"google_search": {}}],
-                    temperature=0.1,
-                )
-                response = gemini_client.models.generate_content_stream(
-                    model="gemini-3.5-flash-lite",
-                    contents=user_prompt,
-                    config=config,
-                )
-                for chunk in response:
-                    if chunk.text:
-                        yield chunk.text
-            except Exception as e:
-                yield f"Gemini Error: {str(e)}"
-
-        return StreamingResponse(generate_gemini(), media_type="text/plain")
-
-    else:
-        raise HTTPException(status_code=400, detail="Invalid model selection specified.")
+    return StreamingResponse(generate_groq(), media_type="text/plain")
