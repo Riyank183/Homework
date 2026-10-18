@@ -85,8 +85,12 @@ async def chat_endpoint(request: ChatRequest):
     if not user_prompt:
         raise HTTPException(status_code=400, detail="No prompt or message provided.")
 
-    # Automatically fetch live web context via Tavily for up-to-date answers
-    web_context = await fetch_tavily_context(user_prompt)
+    # Only fetch Tavily context if the user explicitly selected the Search/Live option from the sidebar
+    # (Matches 'gemini', 'search', or 'groq-search' depending on what your frontend passes)
+    web_context = ""
+    if request.model in ["gemini", "search", "groq-search"]:
+        web_context = await fetch_tavily_context(user_prompt)
+
     enhanced_prompt = user_prompt + web_context
 
     def generate_groq():
