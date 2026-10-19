@@ -54,7 +54,7 @@ async def fetch_tavily_context(query: str) -> str:
     payload = {
         "api_key": tavily_api_key,
         "query": query,
-        "max_results": 3,
+        "max_results": 4,
         "search_depth": "basic"
     }
     
@@ -66,8 +66,23 @@ async def fetch_tavily_context(query: str) -> str:
                 if not results:
                     return ""
                 
-                snippets = [f"- {r.get('title')}: {r.get('content')}" for r in results]
-                return f"\n\n[LIVE WEB SEARCH CONTEXT - CURRENT YEAR 2026]:\n" + "\n".join(snippets) + "\n"
+                # Format cleanly with explicit double line breaks (\\n\\n) so the model respects structure
+                formatted_snippets = []
+                for idx, r in enumerate(results, 1):
+                    title = r.get('title', 'Source')
+                    content = r.get('content', '')
+                    url_source = r.get('url', '')
+                    formatted_snippets.append(
+                        f"### Source {idx}: {title}\n"
+                        f"- **Summary:** {content}\n"
+                        f"- **URL:** {url_source}\n"
+                    )
+                
+                return (
+                    "\n\n[LIVE WEB SEARCH CONTEXT - CURRENT YEAR 2026]:\n"
+                    "Please synthesize the following search results into a clean, well-structured response using bullet points, bold headings, and proper line breaks. Do not output raw pipes or unformatted text blocks.\n\n"
+                    + "\n".join(formatted_snippets) + "\n"
+                )
     except Exception as e:
         print(f"Tavily search error: {e}")
     
