@@ -18,10 +18,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize SDK clients using Render environment variables
-groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
-tavily_api_key = os.environ.get("TAVILY_API_KEY")
-
 supabase_url = os.environ.get("SUPABASE_URL")
 supabase_key = os.environ.get("SUPABASE_SERVICE_KEY")
 supabase: Client = create_client(supabase_url, supabase_key) if supabase_url and supabase_key else None
@@ -47,6 +43,7 @@ SYSTEM_INSTRUCTIONS = (
 
 # Helper function to fetch live web context using Tavily API
 async def fetch_tavily_context(query: str) -> str:
+    tavily_api_key = os.environ.get("TAVILY_API_KEY")
     if not tavily_api_key:
         return ""
     
@@ -66,7 +63,6 @@ async def fetch_tavily_context(query: str) -> str:
                 if not results:
                     return ""
                 
-                # Format cleanly with explicit double line breaks (\\n\\n) so the model respects structure
                 formatted_snippets = []
                 for idx, r in enumerate(results, 1):
                     title = r.get('title', 'Source')
@@ -100,8 +96,13 @@ async def chat_endpoint(request: ChatRequest):
     if not user_prompt:
         raise HTTPException(status_code=400, detail="No prompt or message provided.")
 
-    # Only fetch Tavily context if the user explicitly selected the Search/Live option from the sidebar
-    # (Matches 'gemini', 'search', or 'groq-search' depending on what your frontend passes)
+    # Lazy-initialize Groq client at request time to prevent Vercel build-time crashes
+    groq_api_key = os.environ.get("GROQ_API_KEY")
+    if not groq_api_key:
+        raise HTTPException(status_code=500, detail="GROQ_API_KEY is not configured on the server.")
+    groq_client = Groq(api_key=groq_api_key)
+
+    # Only fetch Tavily context if the user explicitly selected the Live Search option from the sidebar
     web_context = ""
     if request.model in ["gemini", "search", "groq-search"]:
         web_context = await fetch_tavily_context(user_prompt)
