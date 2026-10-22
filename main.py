@@ -104,8 +104,8 @@ async def chat_endpoint(request: ChatRequest):
 
     # Only fetch Tavily context if the user explicitly selected the Live Search option from the sidebar
     web_context = ""
-    if request.model in ["gemini", "search", "groq-search"]:
-        web_context = await fetch_tavily_context(user_prompt)
+if request.model in ["gemini", "search", "groq-search"] or "search" in str(request.model).lower():
+    web_context = await fetch_tavily_context(user_query)
 
     enhanced_prompt = user_prompt + web_context
 
