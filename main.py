@@ -102,10 +102,10 @@ async def chat_endpoint(request: ChatRequest):
         raise HTTPException(status_code=500, detail="GROQ_API_KEY is not configured on the server.")
     groq_client = Groq(api_key=groq_api_key)
 
-    # Only fetch Tavily context if the user explicitly selected the Live Search option from the sidebar
+    # INDENTED PROPERLY INSIDE THE ASYNC FUNCTION:
     web_context = ""
-if request.model in ["gemini", "search", "groq-search"] or "search" in str(request.model).lower():
-    web_context = await fetch_tavily_context(user_query)
+    if request.model in ["gemini", "search", "groq-search"] or "search" in str(request.model).lower():
+        web_context = await fetch_tavily_context(user_prompt)
 
     enhanced_prompt = user_prompt + web_context
 
